@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Upload, FileText, History } from "lucide-react"
 import { useState, useEffect } from "react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Switch } from "@/components/ui/switch"
 
 interface Attribute {
   id: number
@@ -39,14 +41,19 @@ export default function ImportCsvPage() {
   const [headerMappings, setHeaderMappings] = useState<Record<string, string>>({})
   const [importHistory, setImportHistory] = useState<ImportHistory[]>([])
   const [detectedDelimiter, setDetectedDelimiter] = useState<string>(',')
+  const [isImporting, setIsImporting] = useState(false)
 
   // Fetch attributes for header mapping
   useEffect(() => {
     const fetchAttributes = async () => {
       try {
         const response = await fetch('/api/attributes')
+        if (!response.ok) {
+          setAttributes([])
+          return
+        }
         const data = await response.json()
-        setAttributes(data)
+        setAttributes(Array.isArray(data) ? data : [])
       } catch (error) {
         console.error('Error fetching attributes:', error)
       }
@@ -183,6 +190,125 @@ export default function ImportCsvPage() {
     }
   }
 
+  // Determine if a header already corresponds to an attribute
+  const findAttributeForHeader = (header: string): Attribute | undefined => {
+    const lower = header.toLowerCase()
+    return attributes.find(a => a.name.toLowerCase() === lower || a.label.toLowerCase() === lower)
+  }
+
+  // Create attribute from a CSV header via API
+  const createAttributeFromHeader = async (
+    header: string,
+    form: { name: string; label: string; type: string; priority: number; required: boolean }
+  ) => {
+    try {
+      const response = await fetch('/api/attributes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        alert(err.error || 'Failed to create attribute')
+        return
+      }
+      const created: Attribute = await response.json()
+      setAttributes(prev => [...prev, created])
+      // Auto-map this header to the newly created attribute name
+      setHeaderMappings(prev => ({ ...prev, [header]: created.name }))
+    } catch (e) {
+      console.error('Error creating attribute:', e)
+      alert('Failed to create attribute')
+    }
+  }
+
+  // Handle CSV import
+  const handleImportCSV = async () => {
+    if (csvData.length === 0) return
+
+    setIsImporting(true)
+    try {
+      // Process the CSV data with attribute matching and priority handling
+      const processedData = csvData.map((row, index) => {
+        const productData: any = {}
+        
+        // Group attributes by label for priority handling
+        const attributesByLabel: Record<string, Array<{attribute: Attribute, value: string}>> = {}
+        
+        csvHeaders.forEach((header, headerIndex) => {
+          const mappedAttributeName = headerMappings[header]
+          if (mappedAttributeName && row[headerIndex]) {
+            const attribute = attributes.find(attr => attr.name === mappedAttributeName)
+            if (attribute) {
+              const value = row[headerIndex].trim()
+              if (value && value !== '0') { // Only include non-empty and non-zero values
+                if (!attributesByLabel[attribute.label]) {
+                  attributesByLabel[attribute.label] = []
+                }
+                attributesByLabel[attribute.label].push({ attribute, value })
+              }
+            }
+          }
+        })
+
+        // For each label, select the attribute with highest priority
+        Object.keys(attributesByLabel).forEach(label => {
+          const candidates = attributesByLabel[label]
+          if (candidates.length > 0) {
+            // Sort by priority (descending) and take the first one
+            const selected = candidates.sort((a, b) => b.attribute.priority - a.attribute.priority)[0]
+            // Use the attribute label as the key, not the name
+            productData[selected.attribute.label] = selected.value
+          }
+        })
+
+        // Use the first mapped attribute as product name, or generate one
+        const productName = Object.values(productData)[0] || `Product ${index + 1}`
+
+        return {
+          name: productName,
+          attributes: productData
+        }
+      })
+
+      // Send to API
+      const response = await fetch('/api/products/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ products: processedData }),
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        alert(`Successfully imported ${result.count} products!`)
+        
+        // Reset form
+        setCsvData([])
+        setCsvHeaders([])
+        setHeaderMappings({})
+        
+        // Update import history
+        setImportHistory(prev => [{
+          id: Date.now(),
+          filename: 'imported_products.csv',
+          status: 'Completed',
+          importedAt: new Date().toLocaleString(),
+          recordsCount: result.count
+        }, ...prev])
+      } else {
+        const error = await response.json()
+        alert(error.error || 'Failed to import products')
+      }
+    } catch (error) {
+      console.error('Error importing CSV:', error)
+      alert('Failed to import products')
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
   return (
     <SidebarProvider
       style={
@@ -245,9 +371,6 @@ export default function ImportCsvPage() {
                           } - Auto-detected
                         </p>
                       </div>
-                      <Button className="w-full" disabled={csvData.length === 0}>
-                        Import CSV
-                      </Button>
                     </CardContent>
                   </Card>
                   
@@ -306,29 +429,104 @@ export default function ImportCsvPage() {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              {csvHeaders.map((header, index) => (
-                                <TableHead key={index} className="min-w-[200px]">
-                                  <div className="space-y-2">
-                                    <div className="font-medium text-sm">{header}</div>
-                                    <Select
-                                      value={headerMappings[header] || undefined}
-                                      onValueChange={(value) => handleHeaderMappingChange(header, value)}
-                                    >
-                                      <SelectTrigger className="h-8">
-                                        <SelectValue placeholder="Select attribute" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__no_mapping__">No mapping</SelectItem>
-                                        {attributes.map((attr) => (
-                                          <SelectItem key={attr.id} value={attr.name}>
-                                            {attr.label} ({attr.name})
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                </TableHead>
-                              ))}
+                              {csvHeaders.map((header, index) => {
+                                const existing = findAttributeForHeader(header)
+                                return (
+                                  <TableHead key={index} className="min-w-[240px] align-top">
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2">
+                                        <div className="font-medium text-sm">{header}</div>
+                                        {!existing && (
+                                          <Popover>
+                                            <PopoverTrigger asChild>
+                                              <Button variant="outline" size="sm">+ Add attribute</Button>
+                                            </PopoverTrigger>
+                                            <PopoverContent className="w-80">
+                                              <div className="space-y-3">
+                                                <div className="grid gap-2">
+                                                  <Label htmlFor={`name-${index}`}>Name</Label>
+                                                  <Input id={`name-${index}`} defaultValue={header} 
+                                                    onChange={(e) => {
+                                                      const val = e.target.value
+                                                      setHeaderMappings(prev => ({ ...prev, [header]: val }))
+                                                    }}
+                                                  />
+                                                </div>
+                                                <div className="grid gap-2">
+                                                  <Label htmlFor={`label-${index}`}>Label</Label>
+                                                  <Input id={`label-${index}`} defaultValue={header} />
+                                                </div>
+                                                <div className="grid gap-2">
+                                                  <Label>Type</Label>
+                                                  <Select defaultValue="text" onValueChange={(value) => {
+                                                    // Store temporarily on the element dataset
+                                                    const el = document.getElementById(`type-${index}`) as HTMLInputElement | null
+                                                    if (el) el.value = value
+                                                  }}>
+                                                    <SelectTrigger>
+                                                      <SelectValue placeholder="Select type" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                      <SelectItem value="text">Text</SelectItem>
+                                                      <SelectItem value="url">URL</SelectItem>
+                                                      <SelectItem value="qrcode">QR Code</SelectItem>
+                                                      <SelectItem value="barcode">Barcode</SelectItem>
+                                                    </SelectContent>
+                                                  </Select>
+                                                  <input id={`type-${index}`} type="hidden" defaultValue="text" />
+                                                </div>
+                                                <div className="grid gap-2">
+                                                  <Label htmlFor={`priority-${index}`}>Priority</Label>
+                                                  <Input id={`priority-${index}`} type="number" defaultValue={50} min={1} max={100} />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  <Switch id={`required-${index}`} />
+                                                  <Label htmlFor={`required-${index}`}>Required</Label>
+                                                </div>
+                                                <Button
+                                                  onClick={() => {
+                                                    const nameEl = document.getElementById(`name-${index}`) as HTMLInputElement
+                                                    const labelEl = document.getElementById(`label-${index}`) as HTMLInputElement
+                                                    const typeEl = document.getElementById(`type-${index}`) as HTMLInputElement
+                                                    const priorityEl = document.getElementById(`priority-${index}`) as HTMLInputElement
+                                                    const requiredEl = document.getElementById(`required-${index}`) as HTMLInputElement
+                                                    createAttributeFromHeader(header, {
+                                                      name: nameEl?.value || header,
+                                                      label: labelEl?.value || header,
+                                                      type: typeEl?.value || 'text',
+                                                      priority: Number(priorityEl?.value || 50),
+                                                      required: !!requiredEl?.checked,
+                                                    })
+                                                  }}
+                                                  className="w-full"
+                                                >
+                                                  Create attribute
+                                                </Button>
+                                              </div>
+                                            </PopoverContent>
+                                          </Popover>
+                                        )}
+                                      </div>
+                                      <Select
+                                        value={headerMappings[header] || (existing ? existing.name : undefined)}
+                                        onValueChange={(value) => handleHeaderMappingChange(header, value)}
+                                      >
+                                        <SelectTrigger className="h-8">
+                                          <SelectValue placeholder="Select attribute" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="__no_mapping__">No mapping</SelectItem>
+                                          {attributes.map((attr) => (
+                                            <SelectItem key={attr.id} value={attr.name}>
+                                              {attr.label} ({attr.name})
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </TableHead>
+                                )
+                              })}
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -354,6 +552,15 @@ export default function ImportCsvPage() {
                             )}
                           </TableBody>
                         </Table>
+                      </div>
+                      <div className="mt-4 pt-4 border-t">
+                        <Button 
+                          onClick={handleImportCSV}
+                          disabled={isImporting || csvData.length === 0}
+                          className="w-full"
+                        >
+                          {isImporting ? 'Importing...' : 'Import CSV to Products'}
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>

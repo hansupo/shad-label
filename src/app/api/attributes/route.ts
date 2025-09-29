@@ -17,6 +17,17 @@ export async function GET() {
   }
 }
 
+// DELETE /api/attributes - Flush all attributes
+export async function DELETE() {
+  try {
+    await prisma.attribute.deleteMany({})
+    return NextResponse.json({ message: 'All attributes deleted successfully' })
+  } catch (error) {
+    console.error('Error flushing attributes:', error)
+    return NextResponse.json({ error: 'Failed to delete attributes' }, { status: 500 })
+  }
+}
+
 // POST /api/attributes - Create new attribute
 export async function POST(request: NextRequest) {
   try {

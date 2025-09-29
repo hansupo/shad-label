@@ -1,3 +1,5 @@
+"use client"
+
 import { AppSidebar } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
 import {
@@ -6,11 +8,89 @@ import {
 } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ProductsDataTable, Product } from "@/components/products-data-table"
+import { useState, useEffect } from "react"
+
+interface Attribute {
+  id: number
+  name: string
+  label: string
+  priority: number
+}
 
 export default function ProductsPage() {
+  const [products, setProducts] = useState<Product[]>([])
+  const [attributes, setAttributes] = useState<Attribute[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isFlushing, setIsFlushing] = useState(false)
+
+  // Fetch products
+  const fetchProducts = async () => {
+    try {
+      const response = await fetch('/api/products')
+      if (!response.ok) {
+        console.error('Failed to fetch products:', await response.text())
+        setProducts([])
+        return
+      }
+      const data = await response.json()
+      setProducts(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Error fetching products:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Fetch attributes
+  const fetchAttributes = async () => {
+    try {
+      const response = await fetch('/api/attributes')
+      if (!response.ok) {
+        console.error('Failed to fetch attributes:', await response.text())
+        setAttributes([])
+        return
+      }
+      const data = await response.json()
+      setAttributes(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Error fetching attributes:', error)
+    }
+  }
+
+  useEffect(() => {
+    fetchProducts()
+    fetchAttributes()
+  }, [])
+
+  // Handle flush products
+  const handleFlushProducts = async () => {
+    if (!confirm('Are you sure you want to delete ALL products? This action cannot be undone.')) {
+      return
+    }
+
+    setIsFlushing(true)
+    try {
+      const response = await fetch('/api/products/flush', {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        alert('All products have been deleted successfully!')
+        await fetchProducts() // Refresh the list
+      } else {
+        const error = await response.json()
+        alert(error.error || 'Failed to delete products')
+      }
+    } catch (error) {
+      console.error('Error flushing products:', error)
+      alert('Failed to delete products')
+    } finally {
+      setIsFlushing(false)
+    }
+  }
+
   return (
     <SidebarProvider
       style={
@@ -38,7 +118,16 @@ export default function ProductsPage() {
                     <Button variant="outline">Filter</Button>
                     <Button variant="outline">Export</Button>
                   </div>
-                  <Button>Add Product</Button>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="destructive" 
+                      onClick={handleFlushProducts}
+                      disabled={isFlushing || products.length === 0}
+                    >
+                      {isFlushing ? 'Flushing...' : 'Debug: Flush Products'}
+                    </Button>
+                    <Button>Add Product</Button>
+                  </div>
                 </div>
                 
                 <Card>
@@ -47,52 +136,15 @@ export default function ProductsPage() {
                     <CardDescription>Manage your product inventory and labeling</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Product Name</TableHead>
-                          <TableHead>SKU</TableHead>
-                          <TableHead>Category</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Label Type</TableHead>
-                          <TableHead>Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        <TableRow>
-                          <TableCell className="font-medium">Sample Product 1</TableCell>
-                          <TableCell>SP001</TableCell>
-                          <TableCell>Electronics</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">Active</Badge>
-                          </TableCell>
-                          <TableCell>Product Label</TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button size="sm" variant="outline">Edit</Button>
-                              <Button size="sm" variant="outline">Label</Button>
-                              <Button size="sm" variant="destructive">Delete</Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="font-medium">Sample Product 2</TableCell>
-                          <TableCell>SP002</TableCell>
-                          <TableCell>Clothing</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">Draft</Badge>
-                          </TableCell>
-                          <TableCell>Custom Label</TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button size="sm" variant="outline">Edit</Button>
-                              <Button size="sm" variant="outline">Label</Button>
-                              <Button size="sm" variant="destructive">Delete</Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
+                    {loading ? (
+                      <div className="text-center py-8">Loading products...</div>
+                    ) : products.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No products found. Import some products from CSV to get started.
+                      </div>
+                    ) : (
+                      <ProductsDataTable data={products} attributes={attributes} />
+                    )}
                   </CardContent>
                 </Card>
               </div>

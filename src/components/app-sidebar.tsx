@@ -42,6 +42,16 @@ const data = {
       title: "Labels",
       url: "/labels",
       icon: IconChartBar,
+      items: [
+        {
+          title: "Label Templates",
+          url: "/labels",
+        },
+        {
+          title: "Product Labels",
+          url: "/labels/product-labels",
+        },
+      ],
     },
     {
       title: "Products",

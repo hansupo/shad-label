@@ -1,6 +1,7 @@
 "use client"
 
-import { IconCirclePlusFilled, IconMail, type Icon } from "@tabler/icons-react"
+import { IconCirclePlusFilled, IconMail, IconChevronRight, type Icon } from "@tabler/icons-react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -9,6 +10,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
 
 export function NavMain({
@@ -18,6 +22,10 @@ export function NavMain({
     title: string
     url: string
     icon?: Icon
+    items?: {
+      title: string
+      url: string
+    }[]
   }[]
 }) {
   return (
@@ -51,16 +59,66 @@ export function NavMain({
         <SidebarMenu>
           {items.map((item) => (
             <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton asChild tooltip={item.title}>
-                <a href={item.url}>
-                  {item.icon && <item.icon />}
-                  <span>{item.title}</span>
-                </a>
-              </SidebarMenuButton>
+              {item.items ? (
+                <NavMainSubMenu item={item} />
+              ) : (
+                <SidebarMenuButton asChild tooltip={item.title}>
+                  <a href={item.url}>
+                    {item.icon && <item.icon />}
+                    <span>{item.title}</span>
+                  </a>
+                </SidebarMenuButton>
+              )}
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  )
+}
+
+function NavMainSubMenu({
+  item,
+}: {
+  item: {
+    title: string
+    url: string
+    icon?: Icon
+    items: {
+      title: string
+      url: string
+    }[]
+  }
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+
+  return (
+    <>
+      <SidebarMenuButton
+        onClick={() => setIsOpen(!isOpen)}
+        tooltip={item.title}
+      >
+        {item.icon && <item.icon />}
+        <span>{item.title}</span>
+        <IconChevronRight
+          className={`ml-auto transition-transform duration-200 ${
+            isOpen ? "rotate-90" : ""
+          }`}
+        />
+      </SidebarMenuButton>
+      {isOpen && (
+        <SidebarMenuSub>
+          {item.items.map((subItem) => (
+            <SidebarMenuSubItem key={subItem.title}>
+              <SidebarMenuSubButton asChild>
+                <a href={subItem.url}>
+                  <span>{subItem.title}</span>
+                </a>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          ))}
+        </SidebarMenuSub>
+      )}
+    </>
   )
 }

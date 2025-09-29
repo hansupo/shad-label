@@ -33,6 +33,7 @@ export default function AttributesPage() {
   const [attributes, setAttributes] = useState<Attribute[]>([])
   const [loading, setLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isFlushing, setIsFlushing] = useState(false)
   const [editingAttribute, setEditingAttribute] = useState<Attribute | null>(null)
   const [formData, setFormData] = useState({
     name: '',
@@ -46,8 +47,13 @@ export default function AttributesPage() {
   const fetchAttributes = async () => {
     try {
       const response = await fetch('/api/attributes')
+      if (!response.ok) {
+        console.error('Failed to fetch attributes:', await response.text())
+        setAttributes([])
+        return
+      }
       const data = await response.json()
-      setAttributes(data)
+      setAttributes(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error('Error fetching attributes:', error)
     } finally {
@@ -58,6 +64,30 @@ export default function AttributesPage() {
   useEffect(() => {
     fetchAttributes()
   }, [])
+
+  // Handle flush attributes
+  const handleFlushAttributes = async () => {
+    if (!confirm('Are you sure you want to delete ALL attributes? This action cannot be undone.')) {
+      return
+    }
+
+    setIsFlushing(true)
+    try {
+      const response = await fetch('/api/attributes', { method: 'DELETE' })
+      if (response.ok) {
+        alert('All attributes have been deleted successfully!')
+        await fetchAttributes()
+      } else {
+        const error = await response.json()
+        alert(error.error || 'Failed to delete attributes')
+      }
+    } catch (error) {
+      console.error('Error flushing attributes:', error)
+      alert('Failed to delete attributes')
+    } finally {
+      setIsFlushing(false)
+    }
+  }
 
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
@@ -170,10 +200,19 @@ export default function AttributesPage() {
                     <Button variant="outline">Filter</Button>
                     <Button variant="outline">Export</Button>
                   </div>
-                  <Button onClick={openDialog}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Attribute
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="destructive" 
+                      onClick={handleFlushAttributes}
+                      disabled={isFlushing || attributes.length === 0}
+                    >
+                      {isFlushing ? 'Flushing...' : 'Debug: Flush Attributes'}
+                    </Button>
+                    <Button onClick={openDialog}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Attribute
+                    </Button>
+                  </div>
                 </div>
                 
                 <Card>

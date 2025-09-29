@@ -22,3 +22,23 @@ model Attribute {
 
   @@map("attributes")
 }
+
+model Product {
+  id        Int      @id @default(autoincrement())
+  name      String   // Product name (required)
+  attributes Json     // JSON object containing attribute values
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("products")
+}
+
+model LabelTemplate {
+  id        Int      @id @default(autoincrement())
+  name      String   // Template name
+  html      String   // HTML template content
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("label_templates")
+}

@@ -12,7 +12,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Command,
   CommandEmpty,
@@ -27,7 +26,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Badge } from "@/components/ui/badge"
-import { IconChevronDown, IconPlus, IconFileDownload } from "@tabler/icons-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { IconChevronDown, IconPlus, IconFileDownload, IconZoomIn, IconZoomOut } from "@tabler/icons-react"
+import Editor from "@monaco-editor/react"
 
 interface LabelTemplate {
   id: number
@@ -74,6 +76,8 @@ export function LabelTemplateDialog({
   const [productSearchOpen, setProductSearchOpen] = useState(false)
   const [attributeSearchValue, setAttributeSearchValue] = useState("")
   const [productSearchValue, setProductSearchValue] = useState("")
+  const [editorRef, setEditorRef] = useState<any>(null)
+  const [zoomLevel, setZoomLevel] = useState(100)
 
 
   useEffect(() => {
@@ -129,18 +133,26 @@ export function LabelTemplateDialog({
   const insertAttribute = (attribute: Attribute) => {
     // Use human-friendly label in templates
     const attributeTag = `{{${attribute.label}}}`
-    const textarea = document.getElementById("template-html") as HTMLTextAreaElement
-    if (textarea) {
-      const start = textarea.selectionStart
-      const end = textarea.selectionEnd
-      const newHtml = html.substring(0, start) + attributeTag + html.substring(end)
-      setHtml(newHtml)
-      
-      // Set cursor position after the inserted attribute
-      setTimeout(() => {
-        textarea.focus()
-        textarea.setSelectionRange(start + attributeTag.length, start + attributeTag.length)
-      }, 0)
+    
+    if (editorRef) {
+      // Insert at current cursor position in Monaco Editor
+      const selection = editorRef.getSelection()
+      const range = new editorRef.Range(
+        selection.startLineNumber,
+        selection.startColumn,
+        selection.endLineNumber,
+        selection.endColumn
+      )
+      editorRef.executeEdits("insert-attribute", [
+        {
+          range: range,
+          text: attributeTag,
+          forceMoveMarkers: true
+        }
+      ])
+    } else {
+      // Fallback: append to content
+      setHtml(html + attributeTag)
     }
     setAttributeSearchOpen(false)
   }
@@ -298,23 +310,6 @@ export function LabelTemplateDialog({
     return previewHtml
   }
 
-  // ----- Lightweight colorized HTML editor (contenteditable) -----
-  const escapeHtml = (str: string) =>
-    str
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
-      .replace(/\'/g, "&#39;")
-
-  const renderHighlighted = (raw: string) => {
-    const src = escapeHtml(raw)
-      .replace(/\{\{[^}]+\}\}/g, (m) => `<span class=\"hl-placeholder\">${m}</span>`)
-      .replace(/(&lt;\/?)([a-zA-Z0-9-]+)(?=[\s&gt;])/g, (_, p1, p2) => `${p1}<span class=\"hl-tag\">${p2}</span>`)
-      .replace(/(\s)([a-zA-Z_:][-a-zA-Z0-9_:.]*)(=)/g, (_, sp, name, eq) => `${sp}<span class=\"hl-attr\">${name}</span>${eq}`)
-      .replace(/(=\")([^\"]*)(\")/g, (_, a, v, b) => `${a}<span class=\"hl-value\">${v}</span>${b}`)
-    return src
-  }
 
 
   const generatePDF = async () => {
@@ -384,7 +379,7 @@ export function LabelTemplateDialog({
         
         <div className="flex-1 flex gap-4 min-h-0">
           {/* HTML Editor Column */}
-          <div className="flex-1 flex flex-col">
+          <div className="w-1/2 flex flex-col">
             <Label htmlFor="template-name" className="mb-2">
               Template Name
             </Label>
@@ -430,6 +425,10 @@ export function LabelTemplateDialog({
                         <div>• &#123;&#123;attributeValue&#125;&#125; - Attribute value</div>
                         <div>• &#123;&#123;attributeName&#125;&#125; - Internal name</div>
                         <div>• &#123;&#123;attributeType&#125;&#125; - Type (text, url, etc.)</div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Pro Tip:</strong></div>
+                        <div>Type "attribute-loop" in the editor and press Tab for code snippets!</div>
                       </div>
                     </div>
                   </PopoverContent>
@@ -481,36 +480,129 @@ export function LabelTemplateDialog({
               </Popover>
               </div>
             </div>
-            <Textarea
-              id="template-html"
-              value={html}
-              onChange={(e) => setHtml(e.target.value)}
-              placeholder="Enter your HTML template here...
-
-Example with loops:
-<div data-attribute-loop='priorityMin:70; limit:5'>
-  <div>{{attributeLabel}}: {{attributeValue}}</div>
-</div>
-
-Example with type filtering:
-<div data-attribute-loop='type:text,url; limit:3'>
-  <span>{{attributeLabel}}</span>: <span>{{attributeValue}}</span>
-</div>"
-              className="flex-1 font-mono text-sm"
-            />
+            <div className="flex-1 border rounded-md overflow-hidden">
+              <Editor
+                height="100%"
+                defaultLanguage="html"
+                value={html}
+                onChange={(value) => setHtml(value || '')}
+                onMount={(editor, monaco) => {
+                  setEditorRef(editor)
+                  
+                  // Add custom snippets for attribute loops
+                  monaco.languages.registerCompletionItemProvider('html', {
+                    provideCompletionItems: (model, position) => {
+                      const range = {
+                        startLineNumber: position.lineNumber,
+                        endLineNumber: position.lineNumber,
+                        startColumn: position.column,
+                        endColumn: position.column
+                      }
+                      
+                      return {
+                        suggestions: [
+                          {
+                            label: 'attribute-loop-basic',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: '<div data-attribute-loop>\n  <span>{{attributeLabel}}</span>: <span>{{attributeValue}}</span>\n</div>',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            documentation: 'Basic attribute loop',
+                            range: range
+                          },
+                          {
+                            label: 'attribute-loop-filtered',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: '<div data-attribute-loop="priorityMin:70; priorityMax:80; limit:10">\n  <div>{{attributeLabel}}: {{attributeValue}}</div>\n</div>',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            documentation: 'Attribute loop with priority filtering',
+                            range: range
+                          },
+                          {
+                            label: 'attribute-loop-type',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: '<div data-attribute-loop="type:text,url; limit:5">\n  <span>{{attributeLabel}}</span>: <span>{{attributeValue}}</span>\n</div>',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            documentation: 'Attribute loop with type filtering',
+                            range: range
+                          },
+                          {
+                            label: 'attribute-loop-required',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: '<div data-attribute-loop="required:true; limit:3">\n  <div class="required-field">{{attributeLabel}}: {{attributeValue}}</div>\n</div>',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            documentation: 'Attribute loop for required fields only',
+                            range: range
+                          }
+                        ]
+                      }
+                    }
+                  })
+                }}
+                options={{
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                  wordWrap: 'on',
+                  automaticLayout: true,
+                  tabSize: 2,
+                  insertSpaces: true,
+                  formatOnPaste: true,
+                  formatOnType: true,
+                  suggest: {
+                    showKeywords: true,
+                    showSnippets: true,
+                  },
+                  quickSuggestions: {
+                    other: true,
+                    comments: false,
+                    strings: true,
+                  },
+                }}
+                theme="vs-light"
+              />
+            </div>
           </div>
           
           {/* Preview Column */}
-          <div className="flex-1 flex flex-col">
+          <div className="w-1/2 flex flex-col">
             <div className="flex items-center gap-2 mb-2">
               <Label>Preview</Label>
-              <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="ml-auto">
-                    {selectedProduct ? selectedProduct.name : "Select Product"}
-                    <IconChevronDown className="h-4 w-4 ml-1" />
-                  </Button>
-                </PopoverTrigger>
+              <div className="ml-auto flex gap-2">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1">
+                        <IconZoomIn className="h-4 w-4 text-muted-foreground" />
+                        <Select value={zoomLevel.toString()} onValueChange={(value) => setZoomLevel(parseInt(value))}>
+                          <SelectTrigger className="w-20">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="25">25%</SelectItem>
+                            <SelectItem value="50">50%</SelectItem>
+                            <SelectItem value="75">75%</SelectItem>
+                            <SelectItem value="100">100%</SelectItem>
+                            <SelectItem value="125">125%</SelectItem>
+                            <SelectItem value="150">150%</SelectItem>
+                            <SelectItem value="200">200%</SelectItem>
+                            <SelectItem value="300">300%</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Preview zoom level</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      {selectedProduct ? selectedProduct.name : "Select Product"}
+                      <IconChevronDown className="h-4 w-4 ml-1" />
+                    </Button>
+                  </PopoverTrigger>
                 <PopoverContent className="w-80 p-0" align="end">
                   <Command>
                     <CommandInput
@@ -547,11 +639,18 @@ Example with type filtering:
                   </Command>
                 </PopoverContent>
               </Popover>
+              </div>
             </div>
             <div className="flex-1 border rounded-md p-4 bg-white overflow-auto">
               <div
                 dangerouslySetInnerHTML={{ __html: getPreviewHtml() }}
                 className="min-h-full"
+                style={{
+                  transform: `scale(${zoomLevel / 100})`,
+                  transformOrigin: 'top left',
+                  width: `${100 / (zoomLevel / 100)}%`,
+                  height: `${100 / (zoomLevel / 100)}%`
+                }}
               />
             </div>
           </div>

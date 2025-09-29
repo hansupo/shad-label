@@ -42,6 +42,7 @@ export default function ImportCsvPage() {
   const [importHistory, setImportHistory] = useState<ImportHistory[]>([])
   const [detectedDelimiter, setDetectedDelimiter] = useState<string>(',')
   const [isImporting, setIsImporting] = useState(false)
+  const [previewLimit, setPreviewLimit] = useState<number | 'all'>(10)
 
   // Fetch attributes for header mapping
   useEffect(() => {
@@ -530,7 +531,7 @@ export default function ImportCsvPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {csvData.slice(0, 15).map((row, rowIndex) => (
+                            {(previewLimit === 'all' ? csvData : csvData.slice(0, previewLimit)).map((row, rowIndex) => (
                               <TableRow key={rowIndex}>
                                 {row.map((cell, cellIndex) => (
                                   <TableCell key={cellIndex} className="text-sm">
@@ -543,24 +544,45 @@ export default function ImportCsvPage() {
                                 ))}
                               </TableRow>
                             ))}
-                            {csvData.length > 15 && (
+                            {previewLimit !== 'all' && csvData.length > (previewLimit as number) && (
                               <TableRow>
                                 <TableCell colSpan={csvHeaders.length} className="text-center text-gray-500 text-sm">
-                                  ... and {csvData.length - 15} more rows
+                                  ... and {csvData.length - (previewLimit as number)} more rows
                                 </TableCell>
                               </TableRow>
                             )}
                           </TableBody>
                         </Table>
                       </div>
-                      <div className="mt-4 pt-4 border-t">
+                      <div className="mt-4 pt-4 border-t flex items-center gap-3">
                         <Button 
                           onClick={handleImportCSV}
                           disabled={isImporting || csvData.length === 0}
-                          className="w-full"
                         >
                           {isImporting ? 'Importing...' : 'Import CSV to Products'}
                         </Button>
+                        <div className="flex items-center gap-2 ml-auto">
+                          <Label className="text-sm">Preview rows:</Label>
+                          <Select
+                            value={previewLimit === 'all' ? 'all' : String(previewLimit)}
+                            onValueChange={(value) => {
+                              if (value === 'all') setPreviewLimit('all')
+                              else setPreviewLimit(parseInt(value, 10))
+                            }}
+                          >
+                            <SelectTrigger className="h-8 w-[120px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="5">5</SelectItem>
+                              <SelectItem value="10">10</SelectItem>
+                              <SelectItem value="20">20</SelectItem>
+                              <SelectItem value="50">50</SelectItem>
+                              <SelectItem value="100">100</SelectItem>
+                              <SelectItem value="all">All</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>

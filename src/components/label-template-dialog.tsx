@@ -75,6 +75,7 @@ export function LabelTemplateDialog({
   const [attributeSearchValue, setAttributeSearchValue] = useState("")
   const [productSearchValue, setProductSearchValue] = useState("")
 
+
   useEffect(() => {
     if (template) {
       setName(template.name)
@@ -144,30 +145,177 @@ export function LabelTemplateDialog({
     setAttributeSearchOpen(false)
   }
 
+  // Parse loop configuration from data attribute
+  const parseLoopConfig = (configString: string) => {
+    const config: {
+      priorityMin?: number
+      priorityMax?: number
+      limit?: number
+      type?: string[]
+      required?: boolean
+    } = {}
+    
+    if (!configString) return config
+    
+    const pairs = configString.split(';').map(pair => pair.trim())
+    pairs.forEach(pair => {
+      const [key, value] = pair.split(':').map(s => s.trim())
+      switch (key) {
+        case 'priorityMin':
+          config.priorityMin = parseInt(value)
+          break
+        case 'priorityMax':
+          config.priorityMax = parseInt(value)
+          break
+        case 'limit':
+          config.limit = parseInt(value)
+          break
+        case 'type':
+          config.type = value.split(',').map(t => t.trim())
+          break
+        case 'required':
+          config.required = value === 'true'
+          break
+      }
+    })
+    
+    return config
+  }
+
+  // Get filtered and sorted attributes for loops
+  const getFilteredAttributes = (config: {
+    priorityMin?: number
+    priorityMax?: number
+    limit?: number
+    type?: string[]
+    required?: boolean
+  }) => {
+    if (!selectedProduct) return []
+    
+    // Get all attributes that have values in the product
+    const availableAttributes = attributes.filter(attr => {
+      const value = selectedProduct.attributes[attr.label]
+      return value && String(value).trim() !== ''
+    })
+    
+    // Apply filters
+    let filtered = availableAttributes.filter(attr => {
+      if (config.priorityMin !== undefined && attr.priority < config.priorityMin) return false
+      if (config.priorityMax !== undefined && attr.priority > config.priorityMax) return false
+      if (config.type && !config.type.includes(attr.type)) return false
+      if (config.required !== undefined && attr.required !== config.required) return false
+      return true
+    })
+    
+    // Sort by priority (descending) and apply limit
+    filtered = filtered.sort((a, b) => b.priority - a.priority)
+    if (config.limit) {
+      filtered = filtered.slice(0, config.limit)
+    }
+    
+    return filtered.map(attr => ({
+      attribute: attr,
+      value: selectedProduct.attributes[attr.label]
+    }))
+  }
+
+  // Process attribute loops in HTML
+  const processAttributeLoops = (html: string) => {
+    // Find all elements with data-attribute-loop using a more compatible approach
+    const loopRegex = /<([^>]+)\s+data-attribute-loop(?:="([^"]*)")?[^>]*>([\s\S]*?)<\/\1>/g
+    let processedHtml = html
+    
+    let match
+    while ((match = loopRegex.exec(html)) !== null) {
+      const [fullMatch, tagName, configString, content] = match
+      const config = parseLoopConfig(configString || '')
+      const filteredAttributes = getFilteredAttributes(config)
+      
+      // Generate HTML for each attribute
+      const loopContent = filteredAttributes.map(({ attribute, value }) => {
+        return content
+          .replace(/\{\{attributeLabel\}\}/g, attribute.label)
+          .replace(/\{\{attributeValue\}\}/g, String(value))
+          .replace(/\{\{attributeName\}\}/g, attribute.name)
+          .replace(/\{\{attributeType\}\}/g, attribute.type)
+      }).join('')
+      
+      // Replace the loop with generated content
+      processedHtml = processedHtml.replace(fullMatch, loopContent)
+    }
+    
+    return processedHtml
+  }
+
   const getPreviewHtml = () => {
     if (!selectedProduct) {
       return html || "<p>Select a product to preview...</p>"
     }
 
     let previewHtml = html
-    // Replace attribute placeholders that use LABELS with actual product values mapped from attribute NAMEs
-    attributes.forEach((attribute) => {
-      const value = (selectedProduct.attributes as Record<string, any>)[attribute.name]
-      const labelPlaceholder = new RegExp(`\\{\\{${attribute.label}\\}\\}`, 'g')
-      const namePlaceholder = new RegExp(`\\{\\{${attribute.name}\\}\\}`, 'g')
-      if (labelPlaceholder.test(previewHtml)) {
-        previewHtml = previewHtml.replace(labelPlaceholder, String(value ?? ''))
-      }
-      if (namePlaceholder.test(previewHtml)) {
-        previewHtml = previewHtml.replace(namePlaceholder, String(value ?? ''))
+    
+    // Process attribute loops first
+    previewHtml = processAttributeLoops(previewHtml)
+    
+    // Group attributes by label for priority handling (for single placeholders)
+    const attributesByLabel: Record<string, Array<{attribute: Attribute, value: any}>> = {}
+    
+    // Map product attributes to their corresponding attribute definitions
+    // Product attributes are stored with LABELS as keys, not names
+    Object.entries(selectedProduct.attributes).forEach(([key, value]) => {
+      const attribute = attributes.find(attr => attr.label === key)
+      if (attribute && value && String(value).trim() !== '') {
+        if (!attributesByLabel[attribute.label]) {
+          attributesByLabel[attribute.label] = []
+        }
+        attributesByLabel[attribute.label].push({ attribute, value })
       }
     })
+
+    // For each label, select the attribute with highest priority
+    Object.keys(attributesByLabel).forEach(label => {
+      const candidates = attributesByLabel[label]
+      if (candidates.length > 0) {
+        // Sort by priority (descending) and take the first one
+        const selected = candidates.sort((a, b) => b.attribute.priority - a.attribute.priority)[0]
+        const labelPlaceholder = new RegExp(`\\{\\{${label}\\}\\}`, 'g')
+        const replacement = String(selected.value)
+        previewHtml = previewHtml.replace(labelPlaceholder, replacement)
+        console.log(`Replaced {{${label}}} with: ${replacement}`)
+      }
+    })
+    
+    // Debug: log any remaining placeholders
+    const remainingPlaceholders = previewHtml.match(/\{\{[^}]+\}\}/g)
+    if (remainingPlaceholders) {
+      console.log('Remaining placeholders:', remainingPlaceholders)
+      console.log('Available attributes:', Object.keys(attributesByLabel))
+    }
     
     // Replace common placeholders
     previewHtml = previewHtml.replace(/\{\{productName\}\}/g, selectedProduct.name)
     
     return previewHtml
   }
+
+  // ----- Lightweight colorized HTML editor (contenteditable) -----
+  const escapeHtml = (str: string) =>
+    str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/\'/g, "&#39;")
+
+  const renderHighlighted = (raw: string) => {
+    const src = escapeHtml(raw)
+      .replace(/\{\{[^}]+\}\}/g, (m) => `<span class=\"hl-placeholder\">${m}</span>`)
+      .replace(/(&lt;\/?)([a-zA-Z0-9-]+)(?=[\s&gt;])/g, (_, p1, p2) => `${p1}<span class=\"hl-tag\">${p2}</span>`)
+      .replace(/(\s)([a-zA-Z_:][-a-zA-Z0-9_:.]*)(=)/g, (_, sp, name, eq) => `${sp}<span class=\"hl-attr\">${name}</span>${eq}`)
+      .replace(/(=\")([^\"]*)(\")/g, (_, a, v, b) => `${a}<span class=\"hl-value\">${v}</span>${b}`)
+    return src
+  }
+
 
   const generatePDF = async () => {
     if (!selectedProduct) {
@@ -181,7 +329,7 @@ export function LabelTemplateDialog({
     }
 
     try {
-      // Get the processed HTML with product data
+      // Get the processed HTML with product data (includes loop processing)
       const processedHtml = getPreviewHtml()
       
       // Generate filename
@@ -251,22 +399,57 @@ export function LabelTemplateDialog({
               <Label htmlFor="template-html">
                 HTML Template
               </Label>
-              <Popover open={attributeSearchOpen} onOpenChange={setAttributeSearchOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="ml-auto">
-                    <IconPlus className="h-4 w-4 mr-1" />
-                    Add Attribute
-                    <IconChevronDown className="h-4 w-4 ml-1" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80 p-0" align="end">
+              <div className="ml-auto flex gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      Loop Help
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-96 p-4">
+                    <div className="space-y-3">
+                      <h4 className="font-semibold">Attribute Loops</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Use data-attribute-loop to dynamically render multiple attributes:
+                      </p>
+                      <div className="space-y-2 text-xs font-mono bg-muted p-2 rounded">
+                        <div>&lt;div data-attribute-loop&gt;</div>
+                        <div>  &lt;span&gt;&#123;&#123;attributeLabel&#125;&#125;&lt;/span&gt;: &lt;span&gt;&#123;&#123;attributeValue&#125;&#125;&lt;/span&gt;</div>
+                        <div>&lt;/div&gt;</div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Filters:</strong></div>
+                        <div>• priorityMin:70; priorityMax:80</div>
+                        <div>• limit:10</div>
+                        <div>• type:text,url</div>
+                        <div>• required:true</div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Placeholders:</strong></div>
+                        <div>• &#123;&#123;attributeLabel&#125;&#125; - Display label</div>
+                        <div>• &#123;&#123;attributeValue&#125;&#125; - Attribute value</div>
+                        <div>• &#123;&#123;attributeName&#125;&#125; - Internal name</div>
+                        <div>• &#123;&#123;attributeType&#125;&#125; - Type (text, url, etc.)</div>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Popover open={attributeSearchOpen} onOpenChange={setAttributeSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <IconPlus className="h-4 w-4 mr-1" />
+                      Add Attribute
+                      <IconChevronDown className="h-4 w-4 ml-1" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-0" align="end">
                   <Command>
                     <CommandInput
                       placeholder="Search attributes..."
                       value={attributeSearchValue}
                       onValueChange={setAttributeSearchValue}
                     />
-                    <CommandList>
+                    <CommandList className="max-h-64 overflow-auto">
                       <CommandEmpty>No attributes found.</CommandEmpty>
                       <CommandGroup>
                         {attributes
@@ -296,12 +479,23 @@ export function LabelTemplateDialog({
                   </Command>
                 </PopoverContent>
               </Popover>
+              </div>
             </div>
             <Textarea
               id="template-html"
               value={html}
               onChange={(e) => setHtml(e.target.value)}
-              placeholder="Enter your HTML template here..."
+              placeholder="Enter your HTML template here...
+
+Example with loops:
+<div data-attribute-loop='priorityMin:70; limit:5'>
+  <div>{{attributeLabel}}: {{attributeValue}}</div>
+</div>
+
+Example with type filtering:
+<div data-attribute-loop='type:text,url; limit:3'>
+  <span>{{attributeLabel}}</span>: <span>{{attributeValue}}</span>
+</div>"
               className="flex-1 font-mono text-sm"
             />
           </div>

@@ -10,6 +10,8 @@ import {
   IconListDetails,
   IconSearch,
   IconSettings,
+  IconCirclePlusFilled,
+  IconMail,
 } from "@tabler/icons-react"
 
 import { NavDocuments } from "@/components/nav-documents"
@@ -34,6 +36,11 @@ const data = {
   },
   navMain: [
     {
+      title: "Custom Label",
+      url: "/custom-label",
+      icon: IconCirclePlusFilled,
+    },
+    {
       title: "Dashboard",
       url: "/dashboard",
       icon: IconDashboard,
@@ -57,6 +64,11 @@ const data = {
       title: "Products",
       url: "/products",
       icon: IconFolder,
+    },
+    {
+      title: "Import CSV",
+      url: "/import-csv",
+      icon: IconMail,
     },
     {
       title: "Attributes",

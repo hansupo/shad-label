@@ -242,7 +242,7 @@ export default function ImportCsvPage() {
             const attribute = attributes.find(attr => attr.name === mappedAttributeName)
             if (attribute) {
               const value = row[headerIndex].trim()
-              if (value && value !== '0') { // Only include non-empty and non-zero values
+              if (value && value !== '0' && value !== '0.00') { // Only include non-empty and non-zero values
                 if (!attributesByLabel[attribute.label]) {
                   attributesByLabel[attribute.label] = []
                 }

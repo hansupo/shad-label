@@ -79,6 +79,68 @@ export function LabelTemplateDialog({
   const [editorRef, setEditorRef] = useState<any>(null)
   const [zoomLevel, setZoomLevel] = useState(100)
 
+  // Filter functions for template processing
+  const filters = {
+    removeTrailingZeros: (value: any) => {
+      console.log('removeTrailingZeros input:', value, 'type:', typeof value)
+      if (typeof value === 'number') {
+        const result = value.toString().replace(/\.0+$/, '')
+        console.log('Number result:', result)
+        return result
+      }
+      if (typeof value === 'string') {
+        // Handle currency strings like "1999.00€" -> "1999€"
+        let result = value.replace(/\.0+([€$£¥])/g, '$1')
+        // Also handle plain numbers like "3199.00" -> "3199"
+        result = result.replace(/\.0+$/, '')
+        console.log('String result:', result)
+        return result
+      }
+      return value
+    },
+    formatCurrency: (value: any, currency = '€') => {
+      const num = parseFloat(value)
+      if (isNaN(num)) return value
+      return filters.removeTrailingZeros(num.toFixed(2) + currency)
+    },
+    round: (value: any, decimals = 0) => {
+      const num = parseFloat(value)
+      if (isNaN(num)) return value
+      return num.toFixed(decimals)
+    },
+    truncate: (value: any, delimiters = '(),') => {
+      if (typeof value !== 'string') return value
+      
+      // Split delimiters string into individual characters
+      const delimiterChars = delimiters.split('')
+      
+      // Find the first occurrence of any delimiter
+      let minIndex = value.length
+      for (const delimiter of delimiterChars) {
+        const index = value.indexOf(delimiter)
+        if (index !== -1 && index < minIndex) {
+          minIndex = index
+        }
+      }
+      
+      // If no delimiter found, return original value
+      if (minIndex === value.length) return value
+      
+      // Return text before the first delimiter, trimmed
+      return value.substring(0, minIndex).trim()
+    },
+    urlEncode: (value: any) => {
+      if (typeof value !== 'string') return value
+      return encodeURIComponent(value)
+    },
+    searchVM: (value: any) => {
+      if (typeof value !== 'string') return value
+      // Build Velomarket search URL and encode it for QR code
+      const searchUrl = `https://velomarket.ee/?s=${encodeURIComponent(value)}&post_type=product&type_aws=true&aws_id=1&aws_filter=1`
+      return encodeURIComponent(searchUrl)
+    }
+  }
+
 
   useEffect(() => {
     if (template) {
@@ -157,6 +219,29 @@ export function LabelTemplateDialog({
     setAttributeSearchOpen(false)
   }
 
+  // Process filters in template placeholders
+  const processFilters = (value: any, filterString: string) => {
+    if (!filterString) return value
+    
+    const filterParts = filterString.split('|')
+    let result = value
+    
+    for (const filterPart of filterParts) {
+      const [filterName, ...args] = filterPart.split(':')
+      const filter = filters[filterName as keyof typeof filters]
+      
+      if (filter) {
+        if (args.length > 0) {
+          result = (filter as any)(result, ...args)
+        } else {
+          result = filter(result)
+        }
+      }
+    }
+    
+    return result
+  }
+
   // Parse loop configuration from data attribute
   const parseLoopConfig = (configString: string) => {
     const config: {
@@ -204,31 +289,48 @@ export function LabelTemplateDialog({
   }) => {
     if (!selectedProduct) return []
     
-    // Get all attributes that have values in the product
-    const availableAttributes = attributes.filter(attr => {
-      const value = selectedProduct.attributes[attr.label]
-      return value && String(value).trim() !== ''
+    // Group attributes by label and select highest priority for each label
+    const attributesByLabel: Record<string, Array<{attribute: Attribute, value: any}>> = {}
+    
+    // Map product attributes to their corresponding attribute definitions
+    Object.entries(selectedProduct.attributes).forEach(([key, value]) => {
+      const attribute = attributes.find(attr => attr.label === key)
+      if (attribute && value && String(value).trim() !== '') {
+        if (!attributesByLabel[attribute.label]) {
+          attributesByLabel[attribute.label] = []
+        }
+        attributesByLabel[attribute.label].push({ attribute, value })
+      }
+    })
+
+    // For each label, select the attribute with highest priority
+    const selectedAttributes: Array<{attribute: Attribute, value: any}> = []
+    Object.keys(attributesByLabel).forEach(label => {
+      const candidates = attributesByLabel[label]
+      if (candidates.length > 0) {
+        // Sort by priority (descending) and take the first one
+        const selected = candidates.sort((a, b) => b.attribute.priority - a.attribute.priority)[0]
+        selectedAttributes.push(selected)
+        console.log(`Label "${label}": Selected ${selected.attribute.name} (priority: ${selected.attribute.priority}) from ${candidates.length} candidates`)
+      }
     })
     
-    // Apply filters
-    let filtered = availableAttributes.filter(attr => {
-      if (config.priorityMin !== undefined && attr.priority < config.priorityMin) return false
-      if (config.priorityMax !== undefined && attr.priority > config.priorityMax) return false
-      if (config.type && !config.type.includes(attr.type)) return false
-      if (config.required !== undefined && attr.required !== config.required) return false
+    // Apply filters to the selected attributes
+    let filtered = selectedAttributes.filter(({ attribute }) => {
+      if (config.priorityMin !== undefined && attribute.priority < config.priorityMin) return false
+      if (config.priorityMax !== undefined && attribute.priority > config.priorityMax) return false
+      if (config.type && !config.type.includes(attribute.type)) return false
+      if (config.required !== undefined && attribute.required !== config.required) return false
       return true
     })
     
     // Sort by priority (descending) and apply limit
-    filtered = filtered.sort((a, b) => b.priority - a.priority)
+    filtered = filtered.sort((a, b) => b.attribute.priority - a.attribute.priority)
     if (config.limit) {
       filtered = filtered.slice(0, config.limit)
     }
     
-    return filtered.map(attr => ({
-      attribute: attr,
-      value: selectedProduct.attributes[attr.label]
-    }))
+    return filtered
   }
 
   // Process attribute loops in HTML
@@ -245,11 +347,22 @@ export function LabelTemplateDialog({
       
       // Generate HTML for each attribute
       const loopContent = filteredAttributes.map(({ attribute, value }) => {
-        return content
+        let processedContent = content
           .replace(/\{\{attributeLabel\}\}/g, attribute.label)
-          .replace(/\{\{attributeValue\}\}/g, String(value))
           .replace(/\{\{attributeName\}\}/g, attribute.name)
           .replace(/\{\{attributeType\}\}/g, attribute.type)
+        
+        // Process attributeValue with potential filters
+        // Simple placeholder: {{attributeValue}}
+        processedContent = processedContent.replace(/\{\{attributeValue\}\}/g, String(value))
+        
+        // Placeholder with filters: {{attributeValue|removeTrailingZeros}}
+        processedContent = processedContent.replace(/\{\{attributeValue\|([^}]+)\}\}/g, (match, filterString) => {
+          const filteredValue = processFilters(value, filterString)
+          return String(filteredValue)
+        })
+        
+        return processedContent
       }).join('')
       
       // Replace the loop with generated content
@@ -290,10 +403,20 @@ export function LabelTemplateDialog({
       if (candidates.length > 0) {
         // Sort by priority (descending) and take the first one
         const selected = candidates.sort((a, b) => b.attribute.priority - a.attribute.priority)[0]
-        const labelPlaceholder = new RegExp(`\\{\\{${label}\\}\\}`, 'g')
-        const replacement = String(selected.value)
-        previewHtml = previewHtml.replace(labelPlaceholder, replacement)
-        console.log(`Replaced {{${label}}} with: ${replacement}`)
+        
+        // Process both simple placeholders and placeholders with filters
+        // Simple placeholder: {{Hind}}
+        const simplePlaceholder = new RegExp(`\\{\\{${label}\\}\\}`, 'g')
+        previewHtml = previewHtml.replace(simplePlaceholder, String(selected.value))
+        
+        // Placeholder with filters: {{Hind|removeTrailingZeros}}
+        const filterPlaceholder = new RegExp(`\\{\\{${label}\\|([^}]+)\\}\\}`, 'g')
+        previewHtml = previewHtml.replace(filterPlaceholder, (match, filterString) => {
+          const filteredValue = processFilters(selected.value, filterString)
+          return String(filteredValue)
+        })
+        
+        console.log(`Replaced {{${label}}} with: ${selected.value}`)
       }
     })
     
@@ -398,6 +521,83 @@ export function LabelTemplateDialog({
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="outline" size="sm">
+                      Filter Help
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-96 p-4">
+                    <div className="space-y-3">
+                      <h4 className="font-semibold">Template Filters</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Use filters to format and clean up your data in templates:
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          <div className="font-medium text-sm mb-1">Number Filters</div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded">
+                            <div>&#123;&#123;Hind&#124;removeTrailingZeros&#125;&#125;</div>
+                            <div className="text-muted-foreground">// 1999.00€ → 1999€</div>
+                          </div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded mt-1">
+                            <div>&#123;&#123;Price&#124;formatCurrency&#125;&#125;</div>
+                            <div className="text-muted-foreground">// 1999 → 1999€</div>
+                          </div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded mt-1">
+                            <div>&#123;&#123;Number&#124;round:2&#125;&#125;</div>
+                            <div className="text-muted-foreground">// 3.14159 → 3.14</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="font-medium text-sm mb-1">Text Filters</div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded">
+                            <div>&#123;&#123;ProductName&#124;truncate&#125;&#125;</div>
+                            <div className="text-muted-foreground">// "ROMET Gazela 2 (2024) 28"" → "ROMET Gazela 2"</div>
+                          </div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded mt-1">
+                            <div>&#123;&#123;Name&#124;truncate:;|&#125;&#125;</div>
+                            <div className="text-muted-foreground">// Custom delimiters</div>
+                          </div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded mt-1">
+                            <div>&#123;&#123;ProductName&#124;urlEncode&#125;&#125;</div>
+                            <div className="text-muted-foreground">// "ROMET Gazela 2" → "ROMET%20Gazela%202"</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="font-medium text-sm mb-1">URL Examples</div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded">
+                            <div>&lt;a href="/product/&#123;&#123;ProductName&#124;urlEncode&#125;&#125;"&gt;</div>
+                            <div className="text-muted-foreground">// Safe URLs from dynamic content</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="font-medium text-sm mb-1">QR Code Example</div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded">
+                            <div>&lt;img src="https://ticket.xans.ee/?bcid=qrcode&text=&#123;&#123;ProductName&#124;searchVM&#125;&#125;&eclevel=M&scale=2"&gt;</div>
+                            <div className="text-muted-foreground">// QR code with Velomarket search</div>
+                          </div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded mt-1">
+                            <div>&#123;&#123;ProductName&#124;searchVM&#125;&#125;</div>
+                            <div className="text-muted-foreground">// Auto-builds Velomarket search URL</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="font-medium text-sm mb-1">In Loops</div>
+                          <div className="space-y-1 text-xs font-mono bg-muted p-2 rounded">
+                            <div>&#123;&#123;attributeValue&#124;removeTrailingZeros&#125;&#125;</div>
+                            <div className="text-muted-foreground">// Works in attribute loops too</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm">
                       Loop Help
                     </Button>
                   </PopoverTrigger>
@@ -425,6 +625,14 @@ export function LabelTemplateDialog({
                         <div>• &#123;&#123;attributeValue&#125;&#125; - Attribute value</div>
                         <div>• &#123;&#123;attributeName&#125;&#125; - Internal name</div>
                         <div>• &#123;&#123;attributeType&#125;&#125; - Type (text, url, etc.)</div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Filters:</strong></div>
+                        <div>• &#123;&#123;Hind&#124;removeTrailingZeros&#125;&#125; - Remove .00</div>
+                        <div>• &#123;&#123;Price&#124;formatCurrency&#125;&#125; - Format as currency</div>
+                        <div>• &#123;&#123;Number&#124;round:2&#125;&#125; - Round to 2 decimals</div>
+                        <div>• &#123;&#123;ProductName&#124;truncate&#125;&#125; - Truncate at (,)</div>
+                        <div>• &#123;&#123;Name&#124;truncate:;|&#125;&#125; - Custom delimiters</div>
                       </div>
                       <div className="space-y-1 text-xs">
                         <div><strong>Pro Tip:</strong></div>

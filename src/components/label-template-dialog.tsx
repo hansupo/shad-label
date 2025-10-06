@@ -28,7 +28,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { IconChevronDown, IconPlus, IconFileDownload, IconZoomIn, IconZoomOut } from "@tabler/icons-react"
+import { IconChevronDown, IconPlus, IconFileDownload, IconZoomIn, IconZoomOut, IconPrinter } from "@tabler/icons-react"
 import Editor from "@monaco-editor/react"
 
 interface LabelTemplate {
@@ -488,6 +488,56 @@ export function LabelTemplateDialog({
     }
   }
 
+  const printTemplate = () => {
+    if (!selectedProduct) {
+      alert("Please select a product to print")
+      return
+    }
+    if (!html.trim()) {
+      alert("Please add some HTML content to print")
+      return
+    }
+
+    const processedHtml = getPreviewHtml()
+
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      alert('Popup blocked. Please allow popups for this site to use Print.')
+      return
+    }
+
+    const doc = printWindow.document
+    doc.open()
+    doc.write(`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${template?.name || 'Label'}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; box-sizing: border-box; }
+      @page { size: A4; margin: 0; }
+      html, body { height: 100%; background: white; }
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    ${processedHtml}
+    <script>
+      window.addEventListener('load', function(){
+        setTimeout(function(){
+          window.focus();
+          window.print();
+        }, 100);
+      });
+      window.onafterprint = function(){ window.close(); };
+    </script>
+  </body>
+</html>`)
+    doc.close()
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[95vw] max-h-[95vh] w-[95vw] h-[95vh] flex flex-col !max-w-[95vw]">
@@ -867,6 +917,15 @@ export function LabelTemplateDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
+          </Button>
+          <Button 
+            variant="outline"
+            onClick={printTemplate}
+            disabled={!selectedProduct || !html.trim()}
+            className="flex items-center gap-2"
+          >
+            <IconPrinter className="h-4 w-4" />
+            Print...
           </Button>
           <Button 
             variant="outline" 

@@ -33,39 +33,32 @@ export async function POST(request: NextRequest) {
       <html>
         <head>
           <meta charset="utf-8">
+          <!-- Tailwind CDN to render utility classes used in templates -->
+          <script src="https://cdn.tailwindcss.com"></script>
           <style>
             * {
               margin: 0;
               padding: 0;
               box-sizing: border-box;
+              -webkit-print-color-adjust: exact !important; /* Chrome/Safari */
+              print-color-adjust: exact !important; /* Standard */
+            }
+            html, body {
+              height: 100%;
             }
             body {
-              font-family: Arial, sans-serif;
+              font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue", "Apple Color Emoji", "Segoe UI Emoji";
               font-size: 14px;
               line-height: 1.4;
-              color: black;
+              color: #111827;
               background: white;
-              padding: 20mm;
-              width: 210mm;
-              min-height: 297mm;
+              padding: 0;
+              width: 210mm; /* A4 width */
+              min-height: 297mm; /* A4 height */
             }
-            /* Override any problematic color functions */
-            * {
-              color: black !important;
-              background-color: white !important;
-              border-color: black !important;
-            }
-            .bg-primary, .bg-secondary, .bg-accent, .bg-muted {
-              background-color: #f0f0f0 !important;
-            }
-            .text-primary, .text-secondary, .text-accent, .text-muted {
-              color: black !important;
-            }
-            .border, .border-2, .border-4 {
-              border-color: black !important;
-            }
-            h1, h2, h3, h4, h5, h6, p, div, span, a {
-              color: black !important;
+            @page {
+              size: A4;
+              margin: 0;
             }
           </style>
         </head>
@@ -78,10 +71,14 @@ export async function POST(request: NextRequest) {
     // Set the HTML content
     await page.setContent(fullHtml, { waitUntil: 'networkidle0' })
 
+  // Match screen rendering (like the in-app preview)
+  await page.emulateMediaType('screen')
+
     // Generate PDF
     const pdf = await page.pdf({
-      format: 'A4',
+    format: 'A4',
       printBackground: true,
+    preferCSSPageSize: true,
       margin: {
         top: '0mm',
         right: '0mm',
